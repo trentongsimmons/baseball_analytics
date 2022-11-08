@@ -1,0 +1,320 @@
+---
+title: "Projection of True Average Speed-Off-Bat"
+author: "Trenton Simmons"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Read in the data and libraries
+library(janitor)
+library(tidyverse)
+library(gridExtra)
+baseball <- read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Employment/Graduate Materials/TB Rays/battedBallData.csv")
+baseball <- baseball %>%
+  arrange(batter)
+```
+
+## Overview
+
+This analysis is intended to project next season's true average speed-off-bat for a total of 816 players. The data provided includes 73,375 rows with the features of batter, pitcher, hit type, speed-off-bat recorded by System A, speed-off-bat recorded by System B, and the vertical launch angles recorded by both systems. There were a total of 8,432 observations that were missing data from System A, System B, or both systems.
+
+The project was completed by taking weighted averages of individual players' speed-off-bat and vertical launch angle from both systems. Subsequently, the quantiles of the weighted vertical launch angle were used to determine multipliers for individual instances of speed-off-bat, which were then used to calculate the true average speed-off-bat for each player individually. We found that the mean and median of all players' true average speed-off-bat was 80.71 MPH and 82.36 MPH, respectively.
+
+## Methodology and Results
+
+We began by examining the distributions of speed-off-bat for System A and System B. A comparison of their histograms are given in Figure 1. The navy colored histogram represents System A, and the gold colored histogram represents System B.
+
+```{r, speed-histogram-comparison, echo = FALSE, warning = FALSE, fig.cap = "Comparison of Speed-Off-Bat Distributions", fig.width = 5, fig.height = 3}
+# Speed Histograms
+p1 <- ggplot(baseball, aes(x = speed_A)) +
+        geom_histogram(breaks = seq(10, 120, by = 10), color = "white", fill = "navy") + 
+        scale_x_continuous(breaks = seq(10, 120, by = 10)) + theme_minimal() +
+        xlab("Speed-Off-Bat: System A") + ylab("Count")
+p2 <- ggplot(baseball, aes(x = speed_B)) +
+        geom_histogram(breaks = seq(10, 120, by = 10), color = "white", fill = "gold") + 
+        scale_x_continuous(breaks = seq(10, 120, by = 10)) + theme_minimal() +
+        xlab("Speed-Off-Bat: System B") + ylab("Count")
+grid.arrange(p1, p2, ncol = 1)
+```
+
+Figure 1 suggests that System A has a "tighter" distribution than System B. To validate this claim, we computed the standard deviations for System A and System B, and determined them to be 13.19 MPH and 18.62 MPH, respectively. This supports the insight from Figure 1 because System A has a lower standard deviation than System B by 5.43 MPH.
+
+```{r, speed-off-bat-summary, echo = FALSE, results = 'hide'}
+# Speed summary statistics
+summary(baseball$speed_A)
+sd(baseball$speed_A, na.rm = TRUE)
+summary(baseball$speed_B)
+sd(baseball$speed_B, na.rm = TRUE)
+```
+
+We also examined the distributions of vertical launch angle for System A and System B. A comparison of their histograms are given in Figure 2. Once again, the navy colored histogram represents System A, and the gold colored histogram represents System B.
+
+```{r, vangle-histogram-comparison, echo = FALSE, warning = FALSE, fig.cap = "Comparison of Vertical Launch Angle Distributions", fig.width = 5, fig.height = 3}
+# Launch angle histograms
+p3 <- ggplot(baseball, aes(x = vangle_A)) +
+        geom_histogram(breaks = seq(-70, 90, by = 10), color = "white", fill = "navy") + 
+        scale_x_continuous(breaks = seq(-70, 90, by = 10)) + theme_minimal() +
+        xlab("Vertical Launch Angle: System A") + ylab("Count")
+p4 <- ggplot(baseball, aes(x = vangle_B)) +
+        geom_histogram(breaks = seq(-70, 90, by = 10), color = "white", fill = "gold") + 
+        scale_x_continuous(breaks = seq(-70, 90, by = 10)) + theme_minimal() +
+        xlab("Vertical Launch Angle: System B") + ylab("Count")
+grid.arrange(p3, p4, ncol = 1)
+```
+
+Figure 2 suggests that System A and System B have similar spreads. The distribution of System A peaks between the vertical launch angles of 0 degrees to 20 degrees, whereas System B peaks between the vertical launch angles of -10 degrees to 0 degrees. Additionally, their standard deviations are 24.02 degrees and 24.43 degrees, respectively, validating the claim that both systems have a similar spread when reporting vertical launch angle.
+
+```{r, vangle-summary, echo = FALSE, results = 'hide'}
+# Launch angle summary statistics
+summary(baseball$vangle_A)
+sd(baseball$vangle_A, na.rm = TRUE)
+summary(baseball$vangle_B)
+sd(baseball$vangle_B, na.rm = TRUE)
+```
+
+Following an exploration of the data, we then created two more features by weighting speed-off-bat and vertical launch angle and computing their averages. We accomplished this task by utilizing a formula intended to minimize the variance of each additional feature by computing weights for the raw values from System A and System B. The calculated weights from the minimum variance formula suggested that System A and System B's speed-off-bat should be weighted with multipliers of 1.10 and -0.10, respectively. However, these weights are extreme, causing us to reduce the weight of System A's speed-off-bat by 33% to a value of 0.73. The weights must sum to zero by definition, leading us to increase the weight of System B's speed-off-bat to 0.27. 
+
+We completed the same process with vertical launch angle. The weights from the minimum variance formula indicated that System A and System B's vertical launch angle should be weighted with multipliers of -0.16 and 1.16, respectively. Again, these weights are extreme, causing us to reduce the weight of System B's vertical launch angle by 33% to a value of 0.78, and thus, increase the weight of System A's vertical launch angle to 0.22. Following this process, we then created the weighted averages of the two systems by summing System A and System B's speed-off-bat and vertical launch angle multiplied by their corresponding weights. For those observations with null values in System A or System B, we simply imputed the raw value from the recorded system into the weighted average features. We then removed observations with null values in the weighted columns because any null value would indicate a lack of raw data in both System A and System B.
+
+```{r, create-weighted-columns, echo = FALSE}
+# Impute speed_A when speed_B is null and vice versa
+new_baseball <- baseball
+new_baseball$weighted_speed <- rep(NA, length(baseball$speed_A))
+for (i in 1:length(new_baseball$speed_A)) {
+  new_baseball$weighted_speed[i] <- ifelse(is.na(new_baseball$speed_A[i]), new_baseball$speed_B[i],
+                                    ifelse(is.na(new_baseball$speed_B[i]), new_baseball$speed_A[i], 
+                                           new_baseball$weighted_speed[i]))
+}
+
+# Impute vangle_A when vangle_B is null and vice versa
+new_baseball$weighted_vangle <- rep(NA, length(new_baseball$vangle_A))
+for (i in 1:length(new_baseball$vangle_A)) {
+  new_baseball$weighted_vangle[i] <- ifelse(is.na(new_baseball$vangle_A[i]), new_baseball$vangle_B[i],
+                                     ifelse(is.na(new_baseball$vangle_B[i]), new_baseball$vangle_A[i], 
+                                            new_baseball$weighted_vangle[i]))
+}
+
+# Correlations of system A and system B
+baseball_cor <- na.omit(baseball)
+speed_cor <- cor(baseball_cor$speed_A, baseball_cor$speed_B)
+vangle_cor <- cor(baseball_cor$vangle_A, baseball_cor$vangle_B)
+
+# Compute weights of speed to minimize variance of average vector
+w1_speed <- ((var(baseball_cor$speed_B) - speed_cor*sd(baseball_cor$speed_A)*sd(baseball_cor$speed_B)) /
+             (var(baseball_cor$speed_A) + var(baseball_cor$speed_B) -
+              2*speed_cor*sd(baseball_cor$speed_A)*sd(baseball_cor$speed_B)))
+w2_speed <- 1 - w1_speed
+
+# Adjust speed weights to be more conservative
+w1_speed <- w1_speed*(2/3)
+w2_speed <- 1 - w1_speed
+
+# Compute weights of vangle to minimize variance of average vector
+w1_vangle <- ((var(baseball_cor$vangle_B) - vangle_cor*sd(baseball_cor$vangle_A)*sd(baseball_cor$vangle_B)) /
+              (var(baseball_cor$vangle_A) + var(baseball_cor$vangle_B) -
+               2*speed_cor*sd(baseball_cor$vangle_A)*sd(baseball_cor$vangle_B)))
+w2_vangle <- 1 - w1_vangle
+
+# Adjust vangle weights to be more conservative
+w2_vangle <- w2_vangle*(2/3)
+w1_vangle <- 1 - w2_vangle
+
+# Add speed weighted average to dataframe
+for (i in 1:length(new_baseball$weighted_speed)) {
+  new_baseball$weighted_speed[i] <- ifelse(is.na(new_baseball$weighted_speed[i]),
+                                           w1_speed*new_baseball$speed_A[i] + w2_speed*new_baseball$speed_B[i],
+                                           new_baseball$weighted_speed[i])
+}
+
+# Add vangle weighted average to dataframe
+for (i in 1:length(new_baseball$weighted_vangle)) {
+  new_baseball$weighted_vangle[i] <- ifelse(is.na(new_baseball$weighted_vangle[i]),
+                                            w1_vangle*new_baseball$vangle_A[i] + w2_vangle*new_baseball$vangle_B[i],
+                                            new_baseball$weighted_vangle[i])
+}
+
+# Remove observations with null values in weighted columns
+upd_baseball <- new_baseball %>%
+  filter(is.na(weighted_speed) == FALSE & is.na(weighted_vangle) == FALSE)
+```
+
+\newpage
+Following this process, we examined the distribution of the weighted speed-off-bat. The corresponding histogram is given in Figure 3, and is colored light blue to represent a combination of System A and System B.
+
+```{r, weighted-speed-histogram, echo = FALSE, warning = FALSE, fig.cap = "Distribution of Weighted Speed-Off-Bat", fig.width = 5, fig.height = 3, results = 'hide'}
+# Histogram of weighted speed
+ggplot(upd_baseball, aes(x = weighted_speed)) +
+        geom_histogram(breaks = seq(10, 120, by = 10), color = "white", fill = "lightblue") + 
+        scale_x_continuous(breaks = seq(10, 120, by = 10)) + theme_minimal() +
+        xlab("Weighted Speed-Off-Bat") + ylab("Count")
+
+# Summary statistics of weighted speed
+summary(upd_baseball$weighted_speed)
+sd(upd_baseball$weighted_speed)
+```
+
+Figure 3 appears to be an aggregation of the histograms in Figure 1 on page 1, suggesting that the minimum variance weighting procedure was effective. Likewise, the standard deviation is 16.73 MPH, indicating that its spread is less than System B's raw values and more than System A's raw values.
+
+We also examined the distribution of the weighted vertical launch angle. The corresponding histogram is given in Figure 4.
+
+```{r, weighted-angle-histogram, echo = FALSE, warning = FALSE, fig.cap = "Distribution of Weighted Vertical Launch Angle", fig.width = 5, fig.height = 3, results = 'hide'}
+# Histogram of weighted vangle
+ggplot(upd_baseball, aes(x = weighted_vangle)) +
+        geom_histogram(breaks = seq(-70, 90, by = 10), color = "white", fill = "lightblue") + 
+        scale_x_continuous(breaks = seq(-70, 90, by = 10)) +
+        xlab("Weighted Vertical Launch Angle") + ylab("Count") + theme_minimal()
+
+# Summary statistics of weighted vangle
+summary(upd_baseball$weighted_vangle)
+sd(upd_baseball$weighted_vangle)
+```
+
+\newpage
+Figure 4 appears to be an aggregation of the histograms in Figure 2 on page 2, suggesting that the minimum variance weighting technique was effective once again. Additionally, the standard deviation is 24.89 degrees, which is very similar to the standard deviations from the raw vertical launch angle values computed from System A and System B.
+
+After this process, we then calculated the average speed-off-bat per batter for all types of recorded batted balls: fly balls, ground balls, line drives, and popups. We did so by subsetting the data into four data sets (one for each hit type), summing the weighted speeds-off-bat for each individual batter, and dividing by the number of plate appearances per batter per hit type. This produced a true average speed-off-bat for all batters across all hit types with recorded data.
+
+```{r, create-average-hittype, echo = FALSE}
+# Calculate average of fly balls
+fly_ball_data <- upd_baseball %>%
+  filter(hittype == "fly_ball")
+temp_fly_ball <- tabyl(fly_ball_data, batter)
+upd_fly_ball <- merge(x = fly_ball_data, y = temp_fly_ball, by = "batter", all.x = TRUE)
+upd_fly_ball <- upd_fly_ball[, -11]
+final_fly_ball <- aggregate(weighted_speed ~ batter + n, data = upd_fly_ball, FUN = sum)
+final_fly_ball <- final_fly_ball %>%
+  arrange(batter)
+final_fly_ball <- final_fly_ball %>%
+  mutate(true_average_speed_fly = weighted_speed / n)
+final_fly_ball <- final_fly_ball[, -c(2,3)]
+
+# Calculate average of ground balls
+ground_ball_data <- upd_baseball %>%
+  filter(hittype == "ground_ball")
+temp_ground_ball <- tabyl(ground_ball_data, batter)
+upd_ground_ball <- merge(x = ground_ball_data, y = temp_ground_ball, by = "batter", all.x = TRUE)
+upd_ground_ball <- upd_ground_ball[, -11]
+final_ground_ball <- aggregate(weighted_speed ~ batter + n, data = upd_ground_ball, FUN = sum)
+final_ground_ball <- final_ground_ball %>%
+  arrange(batter)
+final_ground_ball <- final_ground_ball %>%
+  mutate(true_average_speed_ground = weighted_speed / n)
+final_ground_ball <- final_ground_ball[, -c(2,3)]
+                    
+# Calculate average of line drives
+line_drive_data <- upd_baseball %>%
+  filter(hittype == "line_drive")
+temp_line_drive <- tabyl(line_drive_data, batter)
+upd_line_drive <- merge(x = line_drive_data, y = temp_line_drive, by = "batter", all.x = TRUE)
+upd_line_drive <- upd_line_drive[, -11]
+final_line_drive <- aggregate(weighted_speed ~ batter + n, data = upd_line_drive, FUN = sum)
+final_line_drive <- final_line_drive %>%
+  arrange(batter)
+final_line_drive <- final_line_drive %>%
+  mutate(true_average_speed_line = weighted_speed / n)
+final_line_drive <- final_line_drive[, -c(2,3)]
+
+# Calculate average of popups
+popup_data <- upd_baseball %>%
+  filter(hittype == "popup")
+temp_popup <- tabyl(popup_data, batter)
+upd_popup <- merge(x = popup_data, y = temp_popup, by = "batter", all.x = TRUE)
+upd_popup <- upd_popup[, -11]
+final_popup <- aggregate(weighted_speed ~ batter + n, data = upd_popup, FUN = sum)
+final_popup <- final_popup %>%
+  arrange(batter)
+final_popup <- final_popup %>%
+  mutate(true_average_speed_popup = weighted_speed / n)
+final_popup <- final_popup[, -c(2,3)]
+
+# Join all dataframes
+hit_type_df <- full_join(final_fly_ball, final_ground_ball, by = "batter", all = TRUE)
+hit_type_df <- full_join(hit_type_df, final_line_drive, by = "batter", all = TRUE)
+hit_type_df <- full_join(hit_type_df, final_popup, by = "batter", all = TRUE)
+```
+
+However, many players had relatively few plate appearances, which can substantially skew their overall average speed-off-bat. To account for this, we explored the correlation of vertical launch angle with speed-off-bat to determine an appropriate multiplier for speed-off-bat dependent upon launch angle. A scatterplot with an overlaid trend line is given in Figure 5.
+
+```{r, scatterplot, echo = FALSE, warning = FALSE, fig.cap = "Scatterplot of Weighted Vertical Launch Angle vs. Weighted Speed-Off-Bat", fig.width = 5, fig.height = 3, results = 'hide', message = FALSE}
+# Scatterplot of speed and vangle
+ggplot(upd_baseball, aes(x = weighted_vangle, y = weighted_speed)) +
+  geom_point(size=0.3, color = "lightblue") + theme_minimal() + 
+  geom_smooth(color = "black") +
+  xlim(-95, 95) + xlab("Weighted Vertical Launch Angle") + ylab("Weighted Speed-Off-Bat")
+```
+
+As was expected, Figure 5 suggests that lower and higher values of weighted vertical launch angle correlated with lower values of weighted speed-off-bat. To account for batters with small sample sizes, we introduced a multiplier of 1.05 on all weighted speed-off-bat values with a corresponding weighted vertical launch angle outside of its interquartile range. Furthermore, we corrected this artificial inflation by introducing a multiplier of 0.95 on the weighted speed-off-bat values with corresponding weighted vertical launch angles residing in the middle two quartiles. In essence, these multipliers attempt to 1) reduce the variance of the true average speed-off-bat feature, and 2) correct for batters with few plate appearances while still maintaining an accurate overall projection. Following the introduction of these multipliers, we took the average of every batter's weighted speed-off-bat.
+
+```{r, create-true-average, echo = FALSE}
+# Weight speed based on vangle quantiles to be used in average
+upd_baseball <- upd_baseball %>%
+  mutate(speed_weight = 
+         ifelse(weighted_vangle < as.numeric(quantile(upd_baseball$weighted_vangle, probs = .25)) |
+                weighted_vangle > as.numeric(quantile(upd_baseball$weighted_vangle, probs = .75)), 1.05, 0.95))
+upd_baseball <- upd_baseball %>%
+  mutate(final_weighted_speed = weighted_speed*speed_weight)
+
+# Compute averages
+temp_baseball <- tabyl(upd_baseball, batter)
+upd_baseball <- merge(x = upd_baseball, y = temp_baseball, by = "batter", all.x = TRUE)
+upd_baseball <- upd_baseball[, -13]
+final_baseball <- aggregate(final_weighted_speed ~ batter + n, data = upd_baseball, FUN = sum)
+final_baseball <- final_baseball %>%
+  arrange(batter)
+final_baseball <- final_baseball %>%
+  mutate(true_average_speed_overall = final_weighted_speed / n)
+final_baseball <- final_baseball[, -c(2,3)]
+```
+
+After completing the true average speed-off-bat projection for all players, we merged this data into one final data set with one observation per batter including: the true average speed-off-bat for fly balls, the true average speed-off-bat for ground balls, the true average speed-off-bat for line drives, the true average speed-off-bat for popups, and finally, the true average speed-off-bat overall. Upon examining the final data set, we noticed that there were two batters excluded because of their lack of recorded vertical launch angle and speed-off-bat in the original data set. To account for this, we added them to the final data set and imputed their true average speed-off-bat projection with the median, and we flagged these observations as imputed in a separate feature.
+
+```{r, create-final-dataset, echo = FALSE, results = 'hide'}
+# Merge data frames
+final <- full_join(hit_type_df, final_baseball, by = "batter", all = TRUE)
+
+# Find mismatched observations and impute median
+anti_join(baseball, final, by = "batter")
+batter_346 <- data.frame(346, NA, NA, NA, NA, median(final$true_average_speed_overall))
+names(batter_346) <- c("batter", "true_average_speed_fly", "true_average_speed_ground",
+                       "true_average_speed_line", "true_average_speed_popup",
+                       "true_average_speed_overall")
+batter_519 <- data.frame(519, NA, NA, NA, NA, median(final$true_average_speed_overall))
+names(batter_519) <- c("batter", "true_average_speed_fly", "true_average_speed_ground",
+                       "true_average_speed_line", "true_average_speed_popup",
+                       "true_average_speed_overall")
+
+# Add back to final
+final <- rbind(final, batter_346, batter_519)
+final <- final %>%
+  arrange(batter)
+
+# Flag imputed batters
+final$impute <- rep(NA, length(final$batter))
+for (i in 1:length(final$batter)) {
+  final$impute[i] <- ifelse((final$batter[i] == 346 | final$batter[i] == 519), 1, 0)
+}
+```
+
+\newpage
+After projecting the true average speed-off-bat by player for next season, we examined its distribution by composing a histogram, given in Figure 6.
+
+```{r, final-histo, echo = FALSE, warning = FALSE, fig.cap = "Distribution of True Average Speed-Off-Bat", fig.width = 5, fig.height = 3, results = 'hide', message = FALSE}
+# Histogram of weighted true speed
+ggplot(final, aes(x = true_average_speed_overall)) +
+  geom_histogram(breaks = seq(20, 120, by = 10), color = "white", fill = "lightblue") + 
+  scale_x_continuous(breaks = seq(20, 120, by = 10)) + theme_minimal() +
+  xlab("True Average Speed-Off-Bat") + ylab("Count")
+
+# Summary statistics of true speed
+summary(final$true_average_speed_overall)
+sd(final$true_average_speed_overall)
+```
+
+Figure 6 suggests that the majority of batters have a projected true average speed-off-bat of between 70 MPH and 90 MPH. This claim is supported by the five-number summary, indicating that the interquartile range stretches from 78.44 MPH to 84.89 MPH, with a mean and median of 80.71 MPH and 82.36 MPH, respectively. Additionally, the standard deviation is 8.42 MPH, suggesting a fairly "tight" distribution. There are outliers in the projection, but many of these are likely a result of the corresponding batters having relatively few plate appearances.
+
+## Recommendations and Conclusion
+Based on our analysis, we recommend this projection for next season because it accounts for 1) the system the statistics were reported on, and 2) the quartile of the vertical launch angle for each batted ball. These considerations are likely to lead to higher accuracy for true average speed-off-bat projection and will improve decision-making when engaging in offseason trades or player free agency.
+
+Despite its limitations when sample sizes for individual batters are small, this analysis is likely to lead to a greater understanding of player metrics and will provide the intel to improve the team's performance as whole.
